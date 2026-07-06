@@ -27,6 +27,17 @@ describe("dashboard", () => {
     expect(r.ok).toBe(true);
     expect(r.body).toBe("top\n<!--b-->\nNEW\n<!--e-->\nbottom\n");
   });
+  it("ignores inline prose mention and targets the standalone-line block", () => {
+    // The marker strings appear inside a sentence; only the standalone lines are spliced.
+    const body = "Refresh: run between the `<!--b-->` / `<!--e-->` markers.\n\n<!--b-->\nOLD\n<!--e-->\n";
+    const r = spliceMarkers(body, "<!--b-->", "<!--e-->", "NEW");
+    expect(r.ok).toBe(true);
+    // Prose sentence must be untouched
+    expect(r.body).toContain("run between the `<!--b-->` / `<!--e-->` markers.");
+    // Block content replaced
+    expect(r.body).toContain("\n<!--b-->\nNEW\n<!--e-->\n");
+    expect(r.body).not.toContain("\nOLD\n");
+  });
   it("reports failure when markers are missing", () => {
     expect(spliceMarkers("no markers", "<!--b-->", "<!--e-->", "X").ok).toBe(false);
   });

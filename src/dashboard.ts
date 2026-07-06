@@ -40,10 +40,11 @@ export function buildSummaryLine(rows: StatusRow[]): string {
 export function spliceMarkers(
   body: string, begin: string, end: string, content: string,
 ): { ok: boolean; body: string } {
-  const bi = body.indexOf(begin);
-  const ei = body.indexOf(end);
-  if (bi === -1 || ei === -1 || ei < bi) return { ok: false, body };
-  const before = body.slice(0, bi + begin.length);
-  const after = body.slice(ei);
-  return { ok: true, body: `${before}\n${content}\n${after}` };
+  const lines = body.split("\n");
+  const bi = lines.findIndex((l) => l.trim() === begin);
+  if (bi === -1) return { ok: false, body };
+  const ei = lines.findIndex((l, i) => i > bi && l.trim() === end);
+  if (ei === -1) return { ok: false, body };
+  const rebuilt = [...lines.slice(0, bi + 1), content, ...lines.slice(ei)].join("\n");
+  return { ok: true, body: rebuilt };
 }
