@@ -160,4 +160,51 @@ describe("surveyNote — keepIfAccurate", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]).toContain("FORMAT");   // only the gen prompt
   });
+
+  it("falls back to full rewrite when judge call fails", async () => {
+    const existingProse = "2 files: tax PDFs from prior year.";
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
+    const body = bodyWithSection(existingProse);
+    const fs = makeFakeFs({ "/d/A/26.10 X": { "a.pdf": "file", "b.pdf": "file" } });
+    const calls: string[] = [];
+    // Judge fails (non-200), gen succeeds
+    const judgeFailRequest = async (opts: { url: string; method: string; headers: Record<string, string>; body: string }) => {
+      const parsed = JSON.parse(opts.body) as { messages: { content: string }[] };
+      const promptText = parsed.messages[0].content as string;
+      calls.push(promptText);
+      if (promptText.includes("FORMAT")) {
+        return { status: 200, json: { content: [{ type: "text", text: "Fresh generated prose." }] }, text: "" };
+      } else {
+        return { status: 500, json: {}, text: "judge failed" };
+      }
+    };
+    const r = await surveyNote("A/26.10 X.md", fm, body, keepCfg, { ...deps(fs), request: judgeFailRequest as any });
+    expect(r.status).toBe("surveyed");
+    expect(r.by).toBe("jd-survey-llm");
+    expect(r.section).toContain("Fresh generated prose.");
+    expect(r.section).not.toContain("<!-- TODO: prose summary -->");
+  });
+
+  it("skips judge and generation when proseProvider is skeleton", async () => {
+    const existingProse = "2 files: tax PDFs from prior year.";
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
+    const body = bodyWithSection(existingProse);
+    const fs = makeFakeFs({ "/d/A/26.10 X": { "a.pdf": "file", "b.pdf": "file" } });
+    const calls: string[] = [];
+    const skeletonCfg = { ...cfg, llmEnabled: true, anthropicApiKey: "k", keepIfAccurate: true, proseProvider: "skeleton" } as any;
+    const trackingRequest = async (opts: { url: string; method: string; headers: Record<string, string>; body: string }) => {
+      const parsed = JSON.parse(opts.body) as { messages: { content: string }[] };
+      const promptText = parsed.messages[0].content as string;
+      calls.push(promptText);
+      return { status: 200, json: { content: [{ type: "text", text: "Should not reach here." }] }, text: "" };
+    };
+    const r = await surveyNote("A/26.10 X.md", fm, body, skeletonCfg, { ...deps(fs), request: trackingRequest as any });
+    expect(r.status).toBe("surveyed");
+    expect(r.by).toBe("jd-survey");
+    expect(r.section).toContain("## Contents (Filesystem)");
+    expect(r.section).toContain("<!-- TODO: prose summary -->");
+    expect(calls).toHaveLength(0);  // No provider calls at all
+  });
 });
