@@ -1,4 +1,4 @@
-import { App, Notice, Plugin, Platform, TFile, requestUrl } from "obsidian";
+import { Notice, Plugin, Platform, TFile, requestUrl } from "obsidian";
 import { DEFAULT_CONFIG, JdSurveyConfig, deriveKeys } from "./config";
 import { NodeFs } from "./fs";
 import { surveyNote } from "./survey";
@@ -69,21 +69,32 @@ export default class JdSurveyPlugin extends Plugin {
 
   async surveyAllStale(): Promise<void> {
     if (!this.guard()) return;
+    const cfg = { ...this.settings, vaultRoot: this.vaultRoot() };
+    const keys = deriveKeys(cfg.frontmatterPrefix);
+    const deps = this.deps();
+    const { fs, today } = deps;
     const cands = candidatesFromPaths(this.app.vault.getMarkdownFiles().map((f) => f.path));
-    const keys = deriveKeys(this.settings.frontmatterPrefix);
     let changed = 0;
     for (const c of cands) {
       const file = this.app.vault.getAbstractFileByPath(c.relPath) as TFile | null;
       if (!file) continue;
-      const fm = { ...(this.app.metadataCache.getFileCache(file)?.frontmatter ?? {}) };
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
+      const resolved = resolveFsPath(c.relPath, fm, cfg, keys, fs);
+      if (resolved.kind !== "resolved") continue;
+      const state = readSurveyState(fm, keys, cfg.dateFormat);
+      const depth = state.depth && state.depth > 0 ? state.depth : cfg.defaultDepth;
+      const w = walk(resolved.fsPath, depth, fs, resolved.skipPath ?? undefined);
+      if (w.items === 0) continue;
+      const reason = stalenessReason(state, { items: w.items, stubs: w.stubs }, cfg.stalenessThresholdDays, today);
+      if (!reason) continue; // fresh — skip
       const body = await this.app.vault.read(file);
-      const res = await surveyNote(c.relPath, fm, body, { ...this.settings, vaultRoot: this.vaultRoot() }, this.deps());
+      const res = await surveyNote(c.relPath, fm, body, cfg, deps);
       if (res.status !== "surveyed") continue;
       await writeBody(this.app, file, res.section!);
       await stampFrontmatter(this.app, file, (f) => applySurveyToFrontmatter(f, res.survey!, keys));
       changed += 1;
     }
-    new Notice(`jd-survey: surveyed ${changed} slot(s)`);
+    new Notice(`jd-survey: surveyed ${changed} stale slot(s)`);
   }
 
   async refreshDashboard(): Promise<void> {
@@ -99,7 +110,7 @@ export default class JdSurveyPlugin extends Plugin {
       const fm = this.app.metadataCache.getFileCache(file)?.frontmatter ?? {};
       const resolved = resolveFsPath(c.relPath, fm, cfg, keys, fs);
       if (resolved.kind !== "resolved") continue;
-      const state = readSurveyState(fm, keys);
+      const state = readSurveyState(fm, keys, cfg.dateFormat);
       const depth = state.depth && state.depth > 0 ? state.depth : cfg.defaultDepth;
       const w = walk(resolved.fsPath, depth, fs, resolved.skipPath ?? undefined);
       if (w.items === 0) continue;

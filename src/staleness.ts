@@ -11,11 +11,11 @@ function asInt(v: unknown): number | null {
   return typeof v === "number" && Number.isFinite(v) ? Math.trunc(v) : null;
 }
 
-export function readSurveyState(fm: Frontmatter, keys: SurveyKeys): SurveyState {
+export function readSurveyState(fm: Frontmatter, keys: SurveyKeys, dateFormat = "YYYY-MM-DD"): SurveyState {
   const obj = (fm[keys.object] && typeof fm[keys.object] === "object")
     ? (fm[keys.object] as Record<string, unknown>) : {};
   return {
-    at: parseDate(obj["at"]),
+    at: parseDate(obj["at"], dateFormat),
     items: asInt(obj["items"]),
     stubs: asInt(obj["stubs"]),
     depth: asInt(obj["depth"]),
