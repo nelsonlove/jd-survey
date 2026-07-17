@@ -224,13 +224,18 @@ export function extractExistingProse(body: string): string | null {
 
   // Strip a trailing ```EmbedRelativeTo … ``` fenced block (+ preceding blanks).
   // The engine re-emits a fresh embed, so it must not be treated as prose.
+  // Only strip if the NEAREST preceding fence-opener is exactly ```EmbedRelativeTo.
+  // If it's any other fence opener (e.g. ```bash), the trailing ``` closes an
+  // unrelated block — leave everything alone.
   {
     let end = lines.length;
     while (end > 0 && !lines[end - 1].trim()) end--; // drop trailing blanks
     if (end > 0 && lines[end - 1].trim() === "```") {
-      let start = end - 1;
-      while (start > 0 && lines[start].trim() !== "```EmbedRelativeTo") start--;
-      if (lines[start].trim() === "```EmbedRelativeTo") {
+      // Scan backward from just before the closing fence to find the nearest
+      // line that starts with ```. Stop at the first such line.
+      let start = end - 2;
+      while (start >= 0 && !lines[start].trim().startsWith("```")) start--;
+      if (start >= 0 && lines[start].trim() === "```EmbedRelativeTo") {
         let i = start;
         while (i > 0 && !lines[i - 1].trim()) i--; // drop blanks before the fence
         lines = lines.slice(0, i);
