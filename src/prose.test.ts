@@ -28,6 +28,17 @@ describe("extract helpers", () => {
     const body = "## Contents (Filesystem)\n\n> [!info] Filesystem snapshot\n> 2 items · surveyed x · depth 2\n\n<!-- TODO: prose summary -->\n";
     expect(extractExistingProse(body)).toBeNull();
   });
+  // Fix 4: only the engine snapshot callout is stripped as non-prose. A leading
+  // human/other callout is real prose and must be retained.
+  it("retains a leading non-snapshot callout as prose", () => {
+    const body =
+      "## Contents (Filesystem)\n\n" +
+      "> [!warning] Hand-authored context\n> read me first\n\n" +
+      "Real prose here.\n\n## Next\n";
+    expect(extractExistingProse(body)).toBe(
+      "> [!warning] Hand-authored context\n> read me first\n\nReal prose here.",
+    );
+  });
 });
 
 describe("extractExistingProse strips trailing embed", () => {

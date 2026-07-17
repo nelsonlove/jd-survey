@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { renderCallout, renderSkeleton, renderWithProse, upsertSection, matchSection, SECTION_HEADING, renderEmbed } from "./renderer";
+import {
+  renderCallout, renderSkeleton, renderWithProse, upsertSection, matchSection,
+  SECTION_HEADING, renderEmbed, SNAPSHOT_CALLOUT_MARKER,
+  replaceSnapshotCallout, sectionHasEmbedFence, sectionHasProse,
+} from "./renderer";
 
 describe("renderCallout", () => {
   it("renders without stubs", () => {
@@ -97,10 +101,74 @@ describe("matchSection (extended)", () => {
 });
 
 describe("renderEmbed", () => {
-  it("builds an EmbedRelativeTo icloud folder block", () => {
+  it("builds an EmbedRelativeTo icloud folder block (default virtual dir)", () => {
     expect(renderEmbed("10-19 Personal/13 Health & medical/13.22 Imaging")).toBe(
       "```EmbedRelativeTo\nicloud://10-19 Personal/13 Health & medical/13.22 Imaging/#\n```",
     );
+  });
+  it("honors a custom virtual directory name", () => {
+    expect(renderEmbed("A/B", "docs")).toBe(
+      "```EmbedRelativeTo\ndocs://A/B/#\n```",
+    );
+  });
+});
+
+describe("sectionHasProse", () => {
+  const callout = renderCallout(2, "2026-07-05", 2, 0);
+  const embed = renderEmbed("A/B");
+
+  it("is true when the section has real prose", () => {
+    expect(sectionHasProse(renderWithProse(callout, "Two files: taxes.", embed))).toBe(true);
+  });
+  it("is false for a skeleton-only section (callout + placeholder + embed)", () => {
+    expect(sectionHasProse(renderSkeleton(callout, embed))).toBe(false);
+  });
+  it("is false for callout + embed with nothing else", () => {
+    const section = `${SECTION_HEADING}\n\n${callout}\n\n${embed}\n`;
+    expect(sectionHasProse(section)).toBe(false);
+  });
+  it("is false for a bare heading", () => {
+    expect(sectionHasProse(`${SECTION_HEADING}\n`)).toBe(false);
+  });
+  it("counts a non-snapshot callout as prose", () => {
+    const section = `${SECTION_HEADING}\n\n> [!warning] Do not touch\n> hand-authored\n`;
+    expect(sectionHasProse(section)).toBe(true);
+  });
+});
+
+describe("sectionHasEmbedFence", () => {
+  it("is true when an EmbedRelativeTo fence is present anywhere", () => {
+    const section = `${SECTION_HEADING}\n\nProse.\n\n\`\`\`EmbedRelativeTo\nicloud://A/B/#\n\`\`\`\n`;
+    expect(sectionHasEmbedFence(section)).toBe(true);
+  });
+  it("is false when there is no EmbedRelativeTo fence", () => {
+    const section = `${SECTION_HEADING}\n\nProse.\n\n\`\`\`bash\necho hi\n\`\`\`\n`;
+    expect(sectionHasEmbedFence(section)).toBe(false);
+  });
+});
+
+describe("replaceSnapshotCallout", () => {
+  const fresh = renderCallout(9, "2026-07-17", 2, 0);
+
+  it("replaces exactly the snapshot callout block, leaving other blockquotes alone", () => {
+    const old = renderCallout(2, "2026-01-01", 2, 0);
+    const section =
+      `${SECTION_HEADING}\n\n${old}\n\n> [!warning] Keep me\n> human note\n\nProse here.\n`;
+    const out = replaceSnapshotCallout(section, fresh);
+    expect(out).toContain("9 items");
+    expect(out).not.toContain("2 items");
+    expect(out).toContain("> [!warning] Keep me\n> human note");
+    expect(out).toContain("Prose here.");
+  });
+
+  it("inserts the fresh callout after the heading when no snapshot callout exists", () => {
+    const section = `${SECTION_HEADING}\n\n> [!note] Human callout\n> text\n\nProse.\n`;
+    const out = replaceSnapshotCallout(section, fresh);
+    // Human callout untouched
+    expect(out).toContain("> [!note] Human callout\n> text");
+    // Fresh callout inserted right after the heading, before the human callout
+    expect(out.indexOf(SNAPSHOT_CALLOUT_MARKER)).toBeLessThan(out.indexOf("[!note] Human callout"));
+    expect(out).toContain("9 items");
   });
 });
 
