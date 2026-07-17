@@ -1,11 +1,17 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { surveyNote } from "./survey";
 import { makeFakeFs } from "./fs";
 import { DEFAULT_CONFIG } from "./config";
 import { renderWithProse, renderCallout } from "./renderer";
 
 const cfg = { ...DEFAULT_CONFIG, vaultRoot: "/v", fsRoot: "/d", llmEnabled: false } as any;
-const deps = (fs: any) => ({ fs, today: new Date(2026, 6, 5), request: null, exec: null });
+const deps = (fs: any) => ({ fs, today: new Date(2026, 6, 5), request: null, exec: null, embedEnabled: false });
+
+// Fixtures for provenance gate + embed tests
+const cfgLlmOn = { ...DEFAULT_CONFIG, vaultRoot: "/v", fsRoot: "/d", llmEnabled: true, proseProvider: "claude-cli" } as any;
+const cfgSkeleton = { ...DEFAULT_CONFIG, vaultRoot: "/v", fsRoot: "/d", llmEnabled: false, proseProvider: "skeleton" } as any;
+// fsWith2Items: the path "A/13.22 Imaging" (relPath "A/13.22 Imaging.md" → mirrorRel) needs 2 items
+const fsWith2Items = makeFakeFs({ "/d/A/13.22 Imaging": { "file1.pdf": "file", "file2.pdf": "file" } });
 
 describe("surveyNote", () => {
   it("skips on opt-out", async () => {
@@ -92,14 +98,14 @@ describe("surveyNote — keepIfAccurate", () => {
 
   it("keeps existing prose and preserves provenance when judge says KEEP", async () => {
     const existingProse = "2 files: tax PDFs from prior year.";
-    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "jd-survey-llm", stubs: 0 };
     const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
     const body = bodyWithSection(existingProse);
     const fs = makeFakeFs({ "/d/A/26.10 X": { "a.pdf": "file", "b.pdf": "file" } });
     const calls: string[] = [];
     const r = await surveyNote("A/26.10 X.md", fm, body, keepCfg, { ...deps(fs), request: makeRequest(calls) as any });
     expect(r.status).toBe("surveyed");
-    expect(r.by).toBe("human");             // provenance preserved from fm.survey.by
+    expect(r.by).toBe("jd-survey-llm");     // provenance preserved from fm.survey.by
     expect(r.section).toContain(existingProse);
     expect(calls).toHaveLength(1);          // only the judge call, no generation
     expect(calls[0]).not.toContain("FORMAT"); // confirm it was the judge prompt
@@ -107,7 +113,7 @@ describe("surveyNote — keepIfAccurate", () => {
 
   it("generates new prose when judge says REWRITE", async () => {
     const existingProse = "2 files: tax PDFs from prior year.";
-    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "jd-survey-llm", stubs: 0 };
     const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
     const body = bodyWithSection(existingProse);
     const fs = makeFakeFs({ "/d/A/26.10 X": { "a.pdf": "file", "b.pdf": "file" } });
@@ -121,7 +127,7 @@ describe("surveyNote — keepIfAccurate", () => {
   it("skips judge and rewrites when embedded count drifted ≥50%", async () => {
     // Existing prose says "2 files" but now there are 4 (100% drift ≥ 50%).
     const existingProse = "2 files: tax PDFs from prior year.";
-    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "jd-survey-llm", stubs: 0 };
     const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
     const body = bodyWithSection(existingProse);
     // 4 files → count=4, embedded=2, drift = |4-2|/2 = 1.0 ≥ 0.5 → force rewrite
@@ -148,7 +154,7 @@ describe("surveyNote — keepIfAccurate", () => {
 
   it("does not call judge when keepIfAccurate is false (default cfg)", async () => {
     const existingProse = "2 files: tax PDFs from prior year.";
-    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "jd-survey-llm", stubs: 0 };
     const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
     const body = bodyWithSection(existingProse);
     const fs = makeFakeFs({ "/d/A/26.10 X": { "a.pdf": "file", "b.pdf": "file" } });
@@ -163,7 +169,7 @@ describe("surveyNote — keepIfAccurate", () => {
 
   it("falls back to full rewrite when judge call fails", async () => {
     const existingProse = "2 files: tax PDFs from prior year.";
-    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "jd-survey-llm", stubs: 0 };
     const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
     const body = bodyWithSection(existingProse);
     const fs = makeFakeFs({ "/d/A/26.10 X": { "a.pdf": "file", "b.pdf": "file" } });
@@ -188,7 +194,7 @@ describe("surveyNote — keepIfAccurate", () => {
 
   it("skips judge and generation when proseProvider is skeleton", async () => {
     const existingProse = "2 files: tax PDFs from prior year.";
-    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "human", stubs: 0 };
+    const surveyFm = { at: "2026-01-01", items: 2, depth: 2, by: "jd-survey-llm", stubs: 0 };
     const fm = { "jd-id": "26.10", title: "X", survey: surveyFm } as any;
     const body = bodyWithSection(existingProse);
     const fs = makeFakeFs({ "/d/A/26.10 X": { "a.pdf": "file", "b.pdf": "file" } });
@@ -206,5 +212,49 @@ describe("surveyNote — keepIfAccurate", () => {
     expect(r.section).toContain("## Contents (Filesystem)");
     expect(r.section).toContain("<!-- TODO: prose summary -->");
     expect(calls).toHaveLength(0);  // No provider calls at all
+  });
+});
+
+describe("provenance gate", () => {
+  it("keeps claude-code prose and refreshes the callout (no LLM call)", async () => {
+    const request = vi.fn(); const exec = vi.fn(); // must NOT be called
+    const body =
+      "# T\n\n## Contents (Filesystem)\n\n> [!info] Filesystem snapshot\n> 1 item · surveyed 2026-01-01 · depth 2\n\n" +
+      "Human-quality gloss.\n";
+    const fm = { "jd-id": "13.22", title: "Imaging", survey: { at: "2026-01-01", items: 1, depth: 2, by: "claude-code", stubs: 0 } };
+    const res = await surveyNote("A/13.22 Imaging.md", fm, body, cfgLlmOn, {
+      fs: fsWith2Items, today: new Date("2026-07-16"), request, exec, embedEnabled: false,
+    });
+    expect(res.status).toBe("surveyed");
+    expect(res.by).toBe("claude-code");           // provenance preserved
+    expect(res.section).toContain("Human-quality gloss.");
+    expect(res.section).toContain("2 items");     // callout refreshed to current count
+    expect(request).not.toHaveBeenCalled();
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("regenerates jd-survey-llm prose (not protected)", async () => {
+    const exec = vi.fn().mockResolvedValue({ code: 0, stdout: "Fresh prose.", stderr: "" });
+    const fm = { "jd-id": "13.22", title: "Imaging", survey: { at: "2026-01-01", items: 1, depth: 2, by: "jd-survey-llm", stubs: 0 } };
+    const res = await surveyNote("A/13.22 Imaging.md", fm, "# T\n\n## Contents (Filesystem)\n\nold\n", cfgLlmOn, {
+      fs: fsWith2Items, today: new Date("2026-07-16"), request: vi.fn(), exec, embedEnabled: false,
+    });
+    expect(exec).toHaveBeenCalled();
+    expect(res.by).toBe("jd-survey-llm");
+  });
+});
+
+describe("embed emission", () => {
+  it("appends the embed when embedEnabled and embedRel present", async () => {
+    const res = await surveyNote("A/13.22 Imaging.md", { "jd-id": "13.22", title: "Imaging" }, "# T\n", cfgSkeleton, {
+      fs: fsWith2Items, today: new Date("2026-07-16"), request: null, exec: null, embedEnabled: true,
+    });
+    expect(res.section).toContain("```EmbedRelativeTo\nicloud://A/13.22 Imaging/#\n```");
+  });
+  it("omits the embed when embedEnabled is false", async () => {
+    const res = await surveyNote("A/13.22 Imaging.md", { "jd-id": "13.22", title: "Imaging" }, "# T\n", cfgSkeleton, {
+      fs: fsWith2Items, today: new Date("2026-07-16"), request: null, exec: null, embedEnabled: false,
+    });
+    expect(res.section).not.toContain("EmbedRelativeTo");
   });
 });

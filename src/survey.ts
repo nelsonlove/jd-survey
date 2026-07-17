@@ -6,13 +6,13 @@ import type { Frontmatter, SurveyBy, SurveyObject } from "./types";
 import { resolveFsPath } from "./pathResolver";
 import { walk } from "./walker";
 import { formatDate } from "./date";
-import { renderCallout, renderSkeleton, renderWithProse } from "./renderer";
+import { renderCallout, renderSkeleton, renderWithProse, renderEmbed } from "./renderer";
 import { buildTree, buildLlmPrompt, buildJudgePrompt, extractExistingProse, extractEmbeddedCount, COUNT_DRIFT_REWRITE_THRESHOLD } from "./prose";
 import type { RequestFn } from "./anthropic";
 import { generateProseFrom } from "./proseSource";
 import type { ExecFn } from "./claudeCli";
 
-export interface SurveyDeps { fs: FsLike; today: Date; request: RequestFn | null; exec: ExecFn | null; }
+export interface SurveyDeps { fs: FsLike; today: Date; request: RequestFn | null; exec: ExecFn | null; embedEnabled: boolean; }
 export interface SurveyResult {
   status: "surveyed" | "skipped";
   reason: string;
@@ -40,9 +40,20 @@ export async function surveyNote(
   const dateStr = formatDate(deps.today, cfg.dateFormat);
   const callout = renderCallout(w.items, dateStr, depth, w.stubs);
 
+  const existingBy = obj["by"] as SurveyBy | undefined;
+  const proseProtected = existingBy === "claude-code" || existingBy === "human";
+
   let prose: string | null = null;
   let keptExisting = false;
-  if (cfg.llmEnabled && cfg.proseProvider !== "skeleton") {
+
+  // Provenance gate: never overwrite skill/human-authored prose. Applies even
+  // when llmEnabled is false, so skeleton runs don't clobber protected prose.
+  if (proseProtected) {
+    const existing = extractExistingProse(body);
+    if (existing) { prose = existing; keptExisting = true; }
+  }
+
+  if (!keptExisting && cfg.llmEnabled && cfg.proseProvider !== "skeleton") {
     const jdid = (fm["jd-id"] as string) || relPath.split("/").pop()!.split(" ")[0];
     const title = (fm["title"] as string) || path.posix.basename(relPath, ".md").split(" ").slice(1).join(" ");
     const tree = buildTree(res.fsPath, depth, deps.fs, res.skipPath ?? undefined);
@@ -79,7 +90,8 @@ export async function surveyNote(
   } else {
     by = prose ? "jd-survey-llm" : "jd-survey";
   }
-  const section = prose ? renderWithProse(callout, prose) : renderSkeleton(callout);
+  const embed = (deps.embedEnabled && res.embedRel) ? renderEmbed(res.embedRel) : undefined;
+  const section = prose ? renderWithProse(callout, prose, embed) : renderSkeleton(callout, embed);
   const survey: SurveyObject = { at: dateStr, items: w.items, depth, by, stubs: w.stubs };
   return { status: "surveyed", reason: "ok", by, section, survey };
 }
