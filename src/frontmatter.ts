@@ -20,3 +20,46 @@ export function migrateFrontmatter(fm: Frontmatter, keys: SurveyKeys): boolean {
   }
   return changed;
 }
+
+/** First YYYY-MM-DD prefix of a legacy date value, or null if it has none. */
+function legacyDate(v: unknown): string | null {
+  if (typeof v !== "string" && typeof v !== "number") return null;
+  const m = /^(\d{4}-\d{2}-\d{2})/.exec(String(v).trim());
+  return m ? m[1] : null;
+}
+
+/**
+ * Convert legacy survey frontmatter (bare `surveyed:` scalar and/or flat
+ * `survey-*` keys) into the nested `survey:` object. Deliberately partial:
+ * a bare scalar yields only `{at}` — no fabricated counts or provenance —
+ * so staleness runs age-based until a real survey fills the other fields.
+ * An existing nested object is never clobbered; legacy keys are stripped.
+ */
+export function migrateLegacySurveyed(fm: Frontmatter, keys: SurveyKeys): boolean {
+  const bareKey = keys.legacyBare;
+  const hasBare = bareKey !== null && Object.prototype.hasOwnProperty.call(fm, bareKey);
+  const flatPresent = keys.legacyFlat.filter((k) => Object.prototype.hasOwnProperty.call(fm, k));
+  if (!hasBare && flatPresent.length === 0) return false;
+
+  const hasNested = fm[keys.object] !== undefined && typeof fm[keys.object] === "object";
+  if (!hasNested) {
+    const obj: Record<string, unknown> = {};
+    // Flat keys are the newer legacy generation — prefer their date over the bare scalar's.
+    const flatAt = legacyDate(fm[`${keys.object}-at`]);
+    const bareAt = hasBare ? legacyDate(fm[bareKey!]) : null;
+    const at = flatAt ?? bareAt;
+    if (at) obj["at"] = at;
+    for (const [field, key] of [
+      ["items", `${keys.object}-items`],
+      ["depth", `${keys.object}-depth`],
+      ["by", `${keys.object}-by`],
+      ["stubs", `${keys.object}-stubs`],
+    ] as const) {
+      if (Object.prototype.hasOwnProperty.call(fm, key)) obj[field] = fm[key];
+    }
+    fm[keys.object] = obj;
+  }
+  for (const k of keys.legacyFlat) delete fm[k];
+  if (bareKey) delete fm[bareKey];
+  return true;
+}

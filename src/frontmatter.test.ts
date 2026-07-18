@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { applySurveyToFrontmatter, migrateFrontmatter } from "./frontmatter";
+import { applySurveyToFrontmatter, migrateFrontmatter, migrateLegacySurveyed } from "./frontmatter";
 import { deriveKeys } from "./config";
 
 const keys = deriveKeys("survey");
@@ -36,5 +36,64 @@ describe("migrateFrontmatter", () => {
   });
   it("no-ops when nothing to migrate", () => {
     expect(migrateFrontmatter({ title: "x" } as any, keys)).toBe(false);
+  });
+});
+
+describe("migrateLegacySurveyed", () => {
+  it("converts a bare surveyed: date to a partial {at} object", () => {
+    const fm: any = { title: "X", surveyed: "2026-05-06" };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(true);
+    expect(fm.survey).toEqual({ at: "2026-05-06" });
+    expect(fm.surveyed).toBeUndefined();
+    expect(fm.title).toBe("X");
+  });
+
+  it("truncates a datetime-ish scalar to the date part", () => {
+    const fm: any = { surveyed: "2026-03-31 12:00" };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(true);
+    expect(fm.survey).toEqual({ at: "2026-03-31" });
+  });
+
+  it("converts full flat keys to a complete nested object", () => {
+    const fm: any = {
+      "survey-at": "2026-06-17", "survey-by": "jd-survey-llm",
+      "survey-depth": 2, "survey-items": 42, "survey-stubs": 0,
+    };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(true);
+    expect(fm.survey).toEqual({ at: "2026-06-17", items: 42, depth: 2, by: "jd-survey-llm", stubs: 0 });
+    for (const k of ["survey-at", "survey-by", "survey-depth", "survey-items", "survey-stubs"]) {
+      expect(fm[k]).toBeUndefined();
+    }
+  });
+
+  it("prefers flat keys over an older bare scalar when both exist", () => {
+    const fm: any = {
+      surveyed: "2026-03-31",
+      "survey-at": "2026-06-17", "survey-by": "jd-survey-llm",
+      "survey-depth": 2, "survey-items": 42, "survey-stubs": 0,
+    };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(true);
+    expect(fm.survey.at).toBe("2026-06-17");
+    expect(fm.surveyed).toBeUndefined();
+  });
+
+  it("includes only the flat fields that are present", () => {
+    const fm: any = { "survey-at": "2026-06-01", "survey-items": 7 };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(true);
+    expect(fm.survey).toEqual({ at: "2026-06-01", items: 7 });
+  });
+
+  it("keeps an existing nested object and just strips legacy keys", () => {
+    const nested = { at: "2026-07-01", items: 3, depth: 2, by: "jd-survey", stubs: 0 };
+    const fm: any = { survey: { ...nested }, surveyed: "2026-01-01" };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(true);
+    expect(fm.survey).toEqual(nested);
+    expect(fm.surveyed).toBeUndefined();
+  });
+
+  it("no-ops when there is nothing legacy", () => {
+    const fm: any = { survey: { at: "2026-07-01", items: 3, depth: 2, by: "jd-survey", stubs: 0 } };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(false);
+    expect(migrateLegacySurveyed({ title: "x" } as any, keys)).toBe(false);
   });
 });
