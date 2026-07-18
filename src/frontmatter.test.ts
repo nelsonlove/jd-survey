@@ -62,6 +62,15 @@ describe("migrateLegacySurveyed", () => {
     expect(fm.survey).toEqual({ at: "2026-05-06" });
   });
 
+  it("preserves the calendar date for a UTC-midnight Date regardless of local timezone", () => {
+    // Obsidian builds a date-only YAML scalar as UTC midnight. Reading it back
+    // with LOCAL getters would yield 2026-05-05 in any negative-offset zone;
+    // the UTC-getter path must keep it 2026-05-06.
+    const fm: any = { surveyed: new Date(Date.UTC(2026, 4, 6)) };
+    expect(migrateLegacySurveyed(fm, keys)).toBe(true);
+    expect(fm.survey).toEqual({ at: "2026-05-06" });
+  });
+
   it("handles a Date-valued survey-at in the flat path", () => {
     const fm: any = {
       "survey-at": new Date(2026, 5, 17), "survey-items": 42,

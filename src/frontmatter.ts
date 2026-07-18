@@ -24,11 +24,21 @@ export function migrateFrontmatter(fm: Frontmatter, keys: SurveyKeys): boolean {
 
 /**
  * Normalize a legacy date value to `YYYY-MM-DD`, or null if it isn't a date.
- * Obsidian's frontmatter parser hands unquoted ISO dates back as JS `Date`
- * objects (not strings), so we route through `parseDate`, which accepts a
- * `Date`, a `YYYY-MM-DD[...]` string (datetime suffix ignored), or null.
+ *
+ * Obsidian parses an unquoted date-only YAML scalar (`surveyed: 2026-05-06`)
+ * to a **UTC-midnight** `Date` object (YAML-1.1 timestamp semantics). Reading
+ * that back with local getters would shift the calendar date a day earlier in
+ * any negative-offset timezone (e.g. US Eastern: `2026-05-06T00:00Z` → local
+ * `2026-05-05`), so the `Date` branch formats with UTC getters. String values
+ * (a quoted scalar, or a `YYYY-MM-DD HH:MM` datetime) go through `parseDate`,
+ * whose string branch already reads local-midnight consistently.
  */
 function legacyDate(v: unknown): string | null {
+  if (v instanceof Date) {
+    if (isNaN(v.getTime())) return null;
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${v.getUTCFullYear()}-${pad(v.getUTCMonth() + 1)}-${pad(v.getUTCDate())}`;
+  }
   const d = parseDate(v);
   return d ? formatDate(d, "YYYY-MM-DD") : null;
 }
